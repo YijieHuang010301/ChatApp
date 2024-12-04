@@ -1,0 +1,1029 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <title>Map</title>
+  <meta name="viewport" content="initial-scale=1.0, user-scalable=no" />
+  <style type="text/css">
+    html {
+      height: 100%
+    }
+
+    body {
+      height: 100%;
+      margin: 0;
+      padding: 0
+    }
+
+    #map-canvas {
+      height: 100%
+    }
+  </style>
+
+  <script src="https://unpkg.com/uuid@latest/dist/umd/uuidv4.min.js">
+    //  From https://www.npmjs.com/package/uuid
+  </script>
+  <script>
+   // alert(uuidv4());
+  </script>
+  <script type="text/javascript">
+  
+    // --------- CONSTANT DEFINITIONS (start) --------------
+
+    /**
+     * The name of the Javascript function to route callback functions
+     */
+    const CALLBACK_FN_NAME = "cefCallbackQuery";
+    
+    /**
+     * The name of the Javascript function to cancel callback functions
+     */ 
+    const CALLBACK_FN_NAME_CANCEL = CALLBACK_FN_NAME+"Cancel";
+    
+    /**
+     * The name of the Javascript function to route object creation return functions
+     */
+    const OBJ_CREATE_FN_NAME = "cefObjCreateQuery";
+
+    /**
+     * The name of the Javascript function to cancel object creation return functions
+     */
+    const OBJ_CREATE_FN_NAME_CANCEL = OBJ_CREATE_FN_NAME+"Cancel";
+
+    
+    /**
+     * The name of the Javascript function to route return values from function calls
+     */
+    const RETURN_VALUE_FN_NAME = "cefReturnValueQuery";
+
+    /**
+     * The name of the Javascript function to cancel return values from function calls
+     */
+    const RETURN_VALUE_FN_NAME_CANCEL = RETURN_VALUE_FN_NAME+"Cancel";  
+
+
+    /**
+     * The name of the field in an CEF object structure that identifies its type.
+     */
+    const CEF_ENTITY_TYPE_FIELD_NAME = "___CEF_ENTITY_TYPE"; // Need to make sure won't accidentally conflict with any other names
+
+    /**
+     * The name of the field in an CEF object structure that identifies its value.
+     */
+    const CEF_ENTITY_VALUE_FIELD_NAME = "___CEF_ENTITY_VALUE"; // Need to make sure won't accidentally conflict with any other names
+
+    /**
+     * The value of the field in an CEF object structure that identifies its type as an ICefObject.
+     */
+    const CEF_ENTITY_TYPE_OBJECT = "___CEF_OBJECT"; // Need to make sure won't accidentally conflict with any other names
+    
+    /**
+     * The value of the field in an CEF object structure that identifies its type as a Runnable.
+     */
+    const CEF_ENTITY_TYPE_RUNNABLE = "___CEF_RUNNABLE"; // Need to make sure won't accidentally conflict with any other names
+
+    /**
+     * The value of the field in an CEF object structure that identifies its type as a Consumer.
+     */
+    const CEF_ENTITY_TYPE_CONSUMER = "___CEF_CONSUMER"; // Need to make sure won't accidentally conflict with any other names
+
+    /**
+     * The value of the field in an CEF object structure that identifies its type as a Google Maps google.maps.IconSequence.
+     * The value of the CEF_ENTITY_VALUE_FIELD_NAME field is the IconSequence options object to be used to instantiate the IconSequence.
+     */
+    const CEF_ENTITY_TYPE_GM_ICON_SEQUENCE = "___CEF_GM_ICON_SEQUENCE"; // Need to make sure won't accidentally conflict with any other names
+
+	/**
+	 * The value of the field in an CEF object structure that identifies its type as a Google Maps google.maps.Symbol.
+	 * The value of the CEF_ENTITY_VALUE_FIELD_NAME field is the Symbol options object to be used to instantiate the Symbol.
+	 */
+	const CEF_ENTITY_TYPE_GM_SYMBOL = "___CEF_GM_SYMBOL"; // Need to make sure won't accidentally conflict with any other names
+
+    // --------- CONSTANT DEFINITIONS (end) --------------
+
+    var GOOGLE_MAPS_API_KEY = ""; //  Value is dynamically filled in
+    var GOOGLE_MAPS_JS_URL = "https://maps.googleapis.com/maps/api/js?key=";
+
+    var idObjMap = {};
+
+    /**
+     * Need to define this variable so that loading of the Google Map library can be detected.
+     */ 
+    var google = null;
+
+    /**
+     * Default CEF query function call success handler (if invoked).
+     */ 
+    window.onQuerySuccess = function(response) { 
+        console.log("[onQuerySuccess] "+response); 
+      };
+    
+    /**
+     * Default CEF query function call failure handler
+     */ 
+    window.onQueryFailure = function(error_code, error_message) { 
+        console.error("[onQueryFailure] ("+error_code+") :"+error_message);
+      };
+  
+    
+    window.onMapLoadId = null;
+    /**
+     * Default callback to use when the map has loaded.
+     * This value should be overriden by the host app.
+     */
+    window.onMapLoad = function (mapId) {
+      console.error("[onMapLoad()] No handler installed! mapId = "+mapId);
+    };
+
+
+    /**
+     * Local only!
+     * General function to load a remote script with a callback that is run once it is loaded.
+     * @param {string} url  The URL of the remote script
+     * @param {function()} callback A no-parameter lambda to call when the script has finished loading.
+     */
+    function loadScript(url, callback) {
+      console.log("[loadScript()] Loading script from " + url);
+      // From https://stackoverflow.com/questions/21294/dynamically-load-a-javascript-file
+      // adding the script tag to the head as suggested before
+      let head = document.getElementsByTagName('head')[0];
+      let script = document.createElement('script');
+      script.type = 'text/javascript';
+      script.src = url;
+
+      // then bind the event to the callback function 
+      // there are several events for cross browser compatibility
+      script.onreadystatechange = callback;
+      script.onload = callback;
+
+      // fire the loading
+      head.appendChild(script);
+    };
+    
+
+    /**
+     * The Google Map object
+     */
+    var map;
+
+    /**
+     * The options for the Google Map object
+     */
+    var mapOptions = { center: {lat:  29.718545, lng:-95.399054}, zoom: 20};
+
+
+    var drawingMgr;
+
+    var mapId;
+
+    /**
+     * Local only!
+     * Load the map onto the page
+     */
+      function loadMap() {
+        console.debug("[loadMap()] Loading map...")
+
+        console.debug("[loadMap()] mapOptions = " + JSON.stringify(mapOptions));
+
+        map = new google.maps.Map(document.getElementById("map-canvas"), mapOptions);
+        google.maps.event.addListenerOnce(map, 'idle', function () {
+          console.debug("[loadMap()] Map loaded.");
+          //  map.data.loadGeoJson('https://storage.googleapis.com/mapsdevsite/json/google.json');
+
+          mapId = uuidv4();
+          console.log("[loadMap] Map ID = "+mapId);
+          registerCefObj(map, mapId);
+
+          window.onMapLoad(mapId);
+        });
+        console.debug("[loadMap()] Done.")
+      }
+
+    /**
+     * Process entities resulting from parsing a JSON string.
+     * Decodes wrapped functionals and referenced Javascript objects. 
+     * Not for general use because it makes assumptions about the
+     * limited possibilities resulting from JSON deserialization.
+     * @param arg The JSON parsed entity
+     * @return 
+     */
+    window.processJsonArg = function (arg) {
+      console.log("[processJsonArg()] Processing arg= "+JSON.stringify(arg));
+      if(arg instanceof Object) { 
+        // Could be array or object
+        if(Array.isArray(arg)) {
+          let result = [];
+          arg.forEach( x =>{
+            result.push(processJsonArg(x));
+          });
+          return result;
+        }
+        else {
+          // Is a simple object
+
+          if(arg.hasOwnProperty(CEF_ENTITY_TYPE_FIELD_NAME)) {   // check if it is a wrapped entity
+          //if(CEF_ENTITY_TYPE_FIELD_NAME in arg) {   // check if it is a wrapped entity
+            // if(CEF_ENTITY_TYPE_OBJECT == arg[CEF_ENTITY_TYPE_FIELD_NAME]) {
+              
+            // }
+            // elif (CEF_ENTITY_TYPE_RUNNABLE == arg[CEF_ENTITY_TYPE_FIELD_NAME]){
+
+            // }
+            // elif (CEF_ENTITY_TYPE_CONSUMER == arg[CEF_ENTITY_TYPE_FIELD_NAME]){
+
+            // }
+
+            if(arg.hasOwnProperty(CEF_ENTITY_VALUE_FIELD_NAME)) {
+            // if(CEF_ENTITY_VALUE_FIELD_NAME in arg) {
+              let value = arg[CEF_ENTITY_VALUE_FIELD_NAME];
+              if(value) {
+                switch(arg[CEF_ENTITY_TYPE_FIELD_NAME]) {
+
+                  case CEF_ENTITY_TYPE_OBJECT:
+                    // Find the wrapped entity reference
+                    let obj = idObjMap[value];
+                    if(obj) {
+                      return obj;
+                    }
+                    else {
+                      console.error("[processJsonArg()] Wrapped object reference is not registered: arg= "+JSON.stringify(arg));
+                      return arg;
+                    }
+  
+                  case CEF_ENTITY_TYPE_RUNNABLE:
+                    // Set up Runnable callback
+                    let runnableCallback = function(pram) {
+                      //cefCallbackQuery({
+                      window[CALLBACK_FN_NAME]({
+                        request: JSON.stringify({
+                          callbackId: value,
+                          params: []
+                        }),
+                        persistent: false,
+                        onSuccess: function(response) { 
+                          console.log("[Runnable callback success]: "+response); 
+                        },
+                        onFailure: function(error_code, error_message) { 
+                          console.error("[Runnable callback  error] ("+error_code+"): "+error_message);
+                        }
+                      });
+                    };
+                    return runnableCallback;
+                  
+                  case CEF_ENTITY_TYPE_CONSUMER:
+                    // Set up Consumer callback
+
+                    let consumerCallback = function(param) {
+                      //cefCallbackQuery({
+                      window[CALLBACK_FN_NAME]({
+                        request: JSON.stringify({
+                          callbackId: value,
+                          params: [param]
+                        }),
+                        persistent: false,
+                        onSuccess: function(response) { 
+                          console.log("[Consumer callback success]: "+response); 
+                        },
+                        onFailure: function(error_code, error_message) { 
+                          console.error("[Consumer callback  error] ("+error_code+"): "+error_message);
+                          console.trace();
+                        }
+                      });
+                    };
+                    return consumerCallback;
+
+                  case CEF_ENTITY_TYPE_GM_ICON_SEQUENCE:
+                    // Convert to google.maps.IconSequence interface instance.  value = IconSequence options = IconSequence instance
+                    console.log("[processJsonArg()] Processing IconSequence object with options = ("+(typeof value)+") ", value );
+                    // Need to recursively process "icon" field:
+
+                    if(value.hasOwnProperty("icon")){
+                        console.log("[processJsonArg()] Processing IconSequence object, icon field: ",value.icon); 
+                    	value.icon = processJsonArg(value.icon);
+                    }
+                    // delete value.map;
+                    return value;
+                    
+                  case CEF_ENTITY_TYPE_GM_SYMBOL:
+                    // Convert to google.maps.Symbol interface instance.  value = Symbol options = Symbol instance 
+                    console.log("[processJsonArg()] Processing Symbol object with options = ", value);
+                    if(value.hasOwnProperty("path")){
+                      let symbol = makeSymbolPathConstant(value.path); // Can't rely on string value to work in place of the actual SymbolPath constant
+                      if(null != symbol) { // if null then path is an SVG path string
+                        value.path = symbol; // Is a SymbolPath constant
+                      }
+                    }
+                    // delete value.map;
+                    console.log("[processJsonArg()] Finished processing Symbol object with processed options = ", value);
+                    return value;
+                    
+
+                  default:
+                    console.error("[processJsonArg()] Unknown wrapped object type encountered: arg= "+JSON.stringify(arg));
+                    return arg;
+                }
+              }
+              else { // value is not a reference
+                console.error("[processJsonArg()] Unknown wrapped object type encountered: arg= "+JSON.stringify(arg));
+              }
+            } 
+            else {
+              console.error("[processJsonArg()] Wrapped object has empty or null '"+CEF_ENTITY_TYPE_FIELD_NAME+"'' value field: arg= "+JSON.stringify(arg));
+              return arg;
+            }
+          }
+          else {
+            // iterate through all the elements of the object 
+            let result = {};
+            Object.keys(arg).forEach( k=>{
+              result[k] = processJsonArg(arg[k]);
+            });
+            return result;
+          }
+        }
+      }
+      else {
+        // Primitives are returned unchanged.
+        return arg;
+      }
+    }
+
+    window.callFn = function(fnName, objArgs) {
+      console.log("[callFn("+fnName+")] fnName = "+fnName+", objArgs = "+JSON.stringify(objArgs));
+
+      let processedArgs = processJsonArg(objArgs.params); // The params for the function call
+
+//      let callback = processJsonArg(objArgs.callback);   // The callback for the return value
+      let requestID = null;
+      if(objArgs.requestID) {
+        requestID = processJsonArg(objArgs.requestID);   // The callback for the return value
+      }
+      let args = [];
+      let idx = 0;
+      // objArgs.params.forEach( function(param){
+      processedArgs.forEach( function(param){
+        console.log("[callFn("+fnName+")] args["+idx+"] = ", param);
+        args[idx++] = param;
+      });
+
+
+      // window[fnName](...args);
+      if( window.hasOwnProperty(fnName)) {
+      // if( fnName in window) {
+        let result = window[fnName](...processedArgs);
+        if(requestID) {
+          console.log("[callFn("+fnName+")] Returning result via supplied request callback function: requestID = "+requestID+", result = ", result);
+          //callback(result);
+
+          window[RETURN_VALUE_FN_NAME]({
+                        request: JSON.stringify({
+                          callbackId: requestID,
+                          params: [result]
+                        }),
+                        persistent: false,
+                        onSuccess: function(response) { 
+                          console.log("[Return value callback success]: "+response); 
+                        },
+                        onFailure: function(error_code, error_message) { 
+                          console.error("[return value callback  error] ("+error_code+"): "+error_message);
+                          console.trace();
+                        }
+                      });
+        }
+        else {
+          console.debug("[callFn("+fnName+")] No requestID supplied ==> Void return.");
+        }
+      }
+      else {
+        console.error("[callFn("+fnName+")] No window method called: "+fnName);
+      }
+      
+    }
+
+    window.callObjVoid = function(obj, methodName, args) {
+      console.log("[callObjVoid()] Obj = ", obj, ",  methodName = "+methodName+", args = ", ...args);
+      // let args = [];
+      // let idx = 0;
+      // if(objArgs.params) { // Can't do forEach on an empty array in Javascript
+      //   objArgs.params.forEach( function(param){
+      //     console.log("[callObjVoid()] args["+idx+"] = "+param);
+      //     args[idx++] = param;
+      //   });
+      // }
+
+
+      if(methodName in obj) {  // obj.hasOwnProperty(methodName) DOES NOT WORK HERE!  WHY???
+        obj[methodName](...args);
+        console.log("[callObjVoid()] Completed call: Obj = ", obj, ",  methodName = "+methodName+", args = ", ...args);
+      }
+      else {
+        console.error("[callObjVoid()] Method '"+methodName+"' not found in "+(typeof obj)+"instance: "+obj);
+      }
+   }
+      
+
+
+    window.callObj = function(obj, methodName, args) { //}, callbackConsumer) {
+      console.log("[callObj()] Obj = "+obj+",  methodName = "+methodName+", args = ", args);
+
+      if(methodName in obj) {  // obj.hasOwnProperty(methodName) DOES NOT WORK HERE!   WHY???
+        let result = obj[methodName](...args);
+        if(undefined == result) {
+          console.error("[callObj()] Result was 'undefined' for the method '"+methodName+"' call on "+(typeof obj)+" instance: ", obj);
+          // callbackConsumer(null);
+          return null;
+        }
+        else {
+          // callbackConsumer(result);
+          return result;
+        }
+      }
+      else {
+        console.error("[callObj()] Method '"+methodName+"' not found in "+(typeof obj)+" instance: ", obj);
+        return null;
+      }
+
+    }
+
+
+    window.setObjProp = function(obj, propName, value) {
+      console.log("[setObjProp()] Obj = ("+(typeof obj)+")"+obj+",  propName = "+propName+", objArg = "+JSON.stringify(value));
+
+      // if(objId in idObjMap) {
+      //   idObjMap[objId][propName] = objArg; // Will create propName field if it doesn't yet exist in the object.
+      // }
+      // else {
+      //   console.error("[setObjProp()] Obj ID, "+objId+", not found in cache of known CEF objects!  Make sure that it has been explicitly created already.");
+      // }
+
+      obj[propName] = value;
+
+    }
+
+    window.getObjProp = function(obj, propName, callbackConsumer) {
+      console.error("[getObjProp()] Obj = ("+(typeof obj)+")"+obj+",  propName = "+propName);
+
+      if(obj.hasOwnProperty(propName)) {
+        callbackConsumer(obj[propName]);
+        return obj[propName];
+      }
+      else {
+        console.error("[getObjProp()] Obj = ("+(typeof obj)+")"+obj+" has no property called: "+propName);
+        return null;
+      }
+      
+    }
+
+    /**
+     * Initialize the Google Maps system and load the map
+     * @param  googleMapsApiKey The Google Maps API key to use
+     * @param options  Options object for the map
+     */
+    // window.initialize = function (googleMapsApiKey, options, onMapLoadFn) {
+    //   window.onMapLoad = onMapLoadFn;
+    //   mapOptions = options;
+    //   console.debug("[initialize()] Initializing map...");
+    //   loadScript(GOOGLE_MAPS_JS_URL + googleMapsApiKey+"&libraries=drawing,visualization", loadMap);
+    // }
+
+    window.initialize = function (googleMapsApiKey, mapOptions, consumerCallback) {
+      console.debug("[initialize()] Starting map. googleMapsApiKey = "+googleMapsApiKey+", mapOptions = "+mapOptions+", callback = "+consumerCallback);
+      window.mapOptions = mapOptions;
+      // mapOptions = idObjMap[optionsId];
+
+      // if(!mapOptions) {
+      //   console.error("[start()] No CEF registered object for ID = "+optionsId);
+      //   mapOptions = {};
+      // }
+
+      console.debug("[initialize()] mapOptions = "+JSON.stringify(mapOptions));
+
+      // window.onMapLoad = function(mapId) {
+      //   cefCallbackQuery({
+      //     request: JSON.stringify({
+      //       callbackId: callbackId,
+      //       params: [mapId]
+      //     }),
+      //     persistent: false,
+      //     onSuccess: function(response) { 
+      //       console.log(response); 
+      //     },
+      //     onFailure: function(error_code, error_message) { 
+      //       console.error("[Console error] ("+error_code+") :"+error_message);
+      //     }
+      //   });
+      // };
+
+      window.onMapLoad = consumerCallback;
+
+      
+      loadScript(GOOGLE_MAPS_JS_URL + googleMapsApiKey+"&libraries=drawing,visualization", loadMap); 
+    }
+    // console.log("initialize = "+ initialize);
+    // console.log("window.initialize = "+ window.initialize);
+
+    /**
+     * Get the Google Map object
+     */
+    window.getMap = function () {
+      return map;
+    }
+
+    //google.maps.event.addDomListener(window, 'load', initialize);
+
+    /**
+     * Utility function to create a google.maps.LatLng object
+     * @param {number} lat The latitude value
+     * @param {number} lng The longitude value
+     * @return {google.maps.LatLng} A LatLng object of a simple {lat: val, lng: val} type object if the Google library is not yet loaded.
+     */
+    window.makeLatLng = function (lat, lng) {
+      if(google) {   // Check if the Google library has been loaded yet.
+        return new google.maps.LatLng(lat, lng);
+      }
+      else { // This typically occurs when creating options objects before the map is initially created.
+        console.debug("[makeLatLng()] Google Maps Javascript library not yet loaded, creating plain JS object version. THIS OBJECT MAY NOT WORK IN ALL SITUATIONS!");
+        return { lat: lat, lng: lng};
+      }
+    }
+
+    /**
+     * Utility to create a google.maps.Point object
+     * @param {number} x The x-coordinate
+     * @param {number} y The y-coordinate
+     */
+    window.makePoint = function (x, y) {
+      if(google) {   // Check if the Google library has been loaded yet.
+        return new google.maps.Point(x, y);
+      }
+      else { // This typically occurs when creating options objects before the map is initially created.
+        console.debug("[makePoint()] Google Maps Javascript library not yet loaded, creating plain JS object version. THIS OBJECT MAY NOT WORK IN ALL SITUATIONS!");
+        return { x: x, y: y};
+      }
+    }
+
+    // /**
+    //  * Utility to create a google.maps.Size object
+    //  * @param {number} width The width of an entity
+    //  * @param {number} height The y-coordinate
+    //  */
+    // window.makeSize = function (width, height) {
+    //   if(google) {   // Check if the Google library has been loaded yet.
+    //     return new google.maps.Size(width, height);
+    //   }
+    //   else { // This typically occurs when creating options objects before the map is initially created.
+    //     console.debug("[makeSize()] Google Maps Javascript library not yet loaded, creating plain JS object version. THIS OBJECT MAY NOT WORK IN ALL SITUATIONS!");
+    //     return { width: width, height: height};
+    //   }
+    // }    
+
+
+    // /**
+    //  * Utility to create a google.maps.Size object
+    //  * @param {number} swLatLng The width of an entity
+    //  * @param {number} neLatLng The y-coordinate
+    //  */
+    // window.makeLatLngBounds = function (swLatLng, neLatLng) {
+    //   if(google) {   // Check if the Google library has been loaded yet.
+    //     let result =  new google.maps.LatLngBounds(swLatLng, neLatLng);
+    //     console.debug("[makeLatLngBounds()] result = "+result);
+    //     return result;
+    //   }
+    //   else { // This typically occurs when creating options objects before the map is initially created.
+    //     console.debug("[makeLatLngBounds()] Google Maps Javascript library not yet loaded, creating plain JS object version. THIS OBJECT MAY NOT WORK IN ALL SITUATIONS!");
+    //     // Note:  This assumes that the LatLng object is a LatLngLiteral object, not a true LatLng object which would only be possible if the google library was loaded.
+    //     let result = { east: neLatLng.lng, north: neLatLng.lat, west: swLatLng.lng, south: swLatLng.lat};
+    //     console.debug("[makeLatLngBounds()] (no google) result = "+result);
+    //     return result;
+    //   }
+    // }    
+
+    /**
+     * Make an Icon object with the given parameters
+     * @param anchor
+     * @param labelOrigin
+     * @param origin
+     * @param scaledSize
+     * @param size
+     * @param url
+     */
+    window.makeIcon = function (anchor, labelOrigin, origin, scaledSize, size, url) {
+      return {
+        anchor: anchor,
+        labelOrigin: labelOrigin,
+        origin: origin,
+        scaledSize: scaledSize,
+        size: size,
+        url: url
+      };
+    }
+
+    // /**
+    //  * Make an IconSequence with the given parameters
+    //  * @param fixedRotation
+    //  * @param icon
+    //  * @param offset
+    //  * @param repeat
+    //  */
+    // window.makeIconSequence = function (fixedRotation, icon, offset, repeat) {
+    //   return {
+    //     fixedRotation: fixedRotation, 
+    //     icon: icon, 
+    //     offset: offset, 
+    //     repeat: repeat
+    //   };
+    // }
+
+    // /**
+    //  * Make a Symbol object from the given parameters
+    //  * @param anchor 
+    //  * @param fillColor
+    //  * @param fillOpacity
+    //  * @param labelOrigin
+    //  * @param path
+    //  * @param rotation
+    //  * @param scale
+    //  * @param strokeColor
+    //  * @param strokeOpacity
+    //  * @param strokeWeight
+    //  */
+    // window. makeSymbol = function (anchor, fillColor, fillOpacity, labelOrigin, path, rotation, scale, strokeColor, strokeOpacity, strokeWeight) {
+    //   return {
+    //     anchor: anchor, 
+    //     fillColor: fillColor, 
+    //     fillOpacity: fillOpacity, 
+    //     labelOrigin: labelOrigin, 
+    //     path: path, 
+    //     rotation: rotation, 
+    //     scale:scale, 
+    //     strokeColor:strokeColor, 
+    //     strokeOpacity: strokeOpacity, 
+    //     strokeWeight: strokeWeight
+    //   };
+    // }
+
+    /**
+     * Return a pre-defined SymbolPath constant based on the given name string.
+     * Do NOT rely on the string value to work in place of the actual SymbolPath constant, which may actually be integers.
+     * The string value may be confused with an SVG path string which is a valid input for a Symbol path.
+     * @param {string} symbolPathName The name of the pre-defined SymbolPath constant 
+     * @return  the value of the associated google.maps.SymbolPath constant if it exists otherwise null.
+     */
+    window.makeSymbolPathConstant = function (symbolPathName) {
+
+      // Look for symbolPathName in ["BACKWARD_CLOSED_ARROW", "BACKWARD_OPEN_ARROW", "CIRCLE", "FORWARD_CLOSED_ARROW",  "FORWARD_OPEN_ARROW"]
+      if(google.maps.SymbolPath.hasOwnProperty(symbolPathName)) {
+        console.log("[makeSymbolPathConstant()] Found google.maps.SymbolPath["+symbolPathName+"] =  ", google.maps.SymbolPath[symbolPathName]);
+        return google.maps.SymbolPath[symbolPathName];
+      }
+      else {
+        console.error("[makeSymbolPathConstant()] Invalid symbol path name, possibly an SVG path string: ", symbolPathName);
+        return null;
+      }
+    }
+
+    /**
+     * Return a pre-defined StrokePosition constant based on the given name string.
+     * @param {string} strokePositionName The name of the pre-defined SymbolPath constant 
+     */
+    window.makeStrokePositionConstant = function (strokePositionName) {
+
+      if(["CENTER", "INSIDE", "OUTSIDE"].includes(strokePositionName)){
+        return google.maps.StrokePosition[strokePositionName];
+      }
+      else {
+        console.error("[makeStrokePositionConstant()] Invalid stoke position name: "+strokePositionName);
+        return null;
+      }
+    }
+
+    /**
+     * Registers the given object in the idObjMap using the optional given id value or createing a new  id value
+     * @return the id value the object is registered under
+     */
+    window.registerCefObj = function (obj, id=null) {
+      // TODO Check if obj already in idObjMap?
+
+      if(!id) {
+        id = uuidv4();    
+      }
+      console.debug("[registerCefObj()] Registering object ID = "+id+", obj = ", obj);
+      idObjMap[id] = obj;
+      return id;
+    }
+
+    /**
+     * Instantiate an object that can be referenced from the Java side.
+     * Registers the new instance and calls back to the Java side to inform it that the object has been instantiated.
+     * @param requestId The  id of the call from the Java side to make an object on hte Javascript side
+     * @param classname the classname to instantiate.  Currently, only google.maps classes are supported as well as an empty string classname for an empty object
+     * @param params Vararg of constructor parameters for the classname. 
+     */
+    window.makeCefObject = function(requestId, classname, cefObjId, ...params) {
+      
+      console.log("[makeCefObject()] Creating object:  Request ID = "+requestId+", classname = '"+classname+"', cefObjId = "+cefObjId+", params = ", params);
+      let cefObj;
+
+      if(idObjMap.hasOwnProperty(cefObjId)) {
+      // if(cefObjId in idObjMap) {
+        console.error("[makeCefObject()] Object already registered for ID = "+cefObjId);
+        cefObj = idObjMap[cefObjId];
+      }
+      else {
+        if(classname) {
+          // check to see if classname exists?
+          if(google.maps.hasOwnProperty(classname)) {
+          // if(classname in google.maps) {
+            cefObj = new google.maps[classname](...params);
+            console.log("[makeCefObject()] Created google.map."+classname+" object: ", cefObj);
+          }
+          else {
+             console.error("[makeCefObject()] Cannot find requested classname in google.maps: "+classname);
+             return;
+          }
+        }
+        else { // check other locations too?
+          console.error("[makeCefObject()] No classname specified!  Creating an empty object.");
+          cefObj = {};
+        }
+        registerCefObj(cefObj, cefObjId); // save in object registration map
+      }
+
+      // do callback
+      window[OBJ_CREATE_FN_NAME]({
+        request: JSON.stringify({
+          requestId: requestId,
+          param: cefObjId 
+        }),
+        persistent: false,
+        onSuccess: window.onQuerySuccess,
+        onFailure:window.onQueryFailure
+      });      
+
+    }
+    /**
+     * Return a bare Javascript objects
+     * @return A Javascript object with no properties
+     */
+    window.makeJsObject = function () {
+      return {};
+    }
+
+
+    window.returnJsObject = function (obj) {
+      let id = idObjMap.get(obj);
+      if (!id) {
+        id = uuidv4();
+        idObjMap.set(ojb, id);
+      }
+
+      cefCreateObjQuery({ // wrong callback?
+        request: JSON.stringify({
+          callbackId: callbackId,
+          params: [id.toString()]
+        }),
+        persistent: false,
+        onSuccess: function (response) {
+          console.log(response);
+        },
+        onFailure: function (error_code, error_message) {
+          console.error("[Console error] (" + error_code + ") :" + error_message);
+        }
+      });
+
+
+    }
+
+    // console.log("makeJsObject = "+ makeJsObject);
+    // console.log("window.makeJsObject = "+ window.makeJsObject);
+
+    /**
+     * To the given object, add the handler function for the given event 
+     * @param obj The object to add the event to
+     * @param eventName The name of the desired event type
+     * @param callback The callback function to run when the event occurs.
+     */
+    window.addEventTo = function (obj, eventName, callback) {
+      console.log("[addEventTo()] event name = "+eventName+" added to obj = ", obj, " with callback =  ", callback);
+      google.maps.event.addListener(obj, eventName, callback);
+    }
+
+    // /**
+    //  * Make the specified Google Maps component, which must be in the google.maps package.
+    //  * @param {string} componentName  The name of the component to create 
+    //  * @param args  A varargs of parameters for the component's constructor.  Typically the options object.
+    //  * @return A new instance of the desired component or null if the component type doesn't exist.
+    //  */
+    // window.makeMapComponent = function (componentName, ...args) { //, options) {
+    //   // TODO Add reasonable error message for invalid componentName
+    //   if(! google.maps[componentName]) {
+    //     console.error("[[makeMapComponent()] No google.maps class called '"+componentName+"'");
+    //     return null;
+    //   }
+    //   let comp = new google.maps[componentName](...args); //options);
+
+    //   console.log("[makeMapComponent("+componentName+")] args = ",args,", comp = ", comp);
+    //   return comp;
+    // }
+    
+    
+    /**
+     * Make an array from the supplied arguments  (vararg input)
+     */
+    window.makeArray = function () {
+      // console.debug("[makeArray()] arguments.length = "+ arguments.length);
+      let x = Array.from(arguments);
+      console.debug("[makeArray()] x = "+ x);
+      // console.debug("[makeArray()] x.length = "+ x.length);
+
+      // let y = Array.prototype.slice.apply(arguments);  // alternate array construction technique
+      // console.debug("[makeArray()] y = "+ y);
+      
+      return x;
+    }
+
+    // window.makeOverlay = function(url, bounds, options) {
+    //   // ((29.71762076884385, -95.39831886814022), (29.719620768843853, -95.40031886814023))
+    //   console.debug("bounds = "+bounds);
+    //   console.debug("options properties: "+Object.keys(options));
+    //   console.debug("options.map = "+options.map);
+
+    //   console.debug("map equal? "+(options.map == getMap()));
+
+
+    //   // var overlay = new google.maps.GroundOverlay("https://scholarship.rice.edu/bitstream/handle/1911/63949/wrc00681.jpg", {west: -95.40031886814023, north: 29.719620768843853, east: -95.39831886814022, south:  29.71762076884385});
+    //   // var overlay = new google.maps.GroundOverlay(url, bounds, options);
+    //   var overlay = makeMapComponent("GroundOverlay", url, bounds, options);
+
+    //   console.debug("overlay.map = "+overlay.map);
+    //   // overlay.setMap(getMap());
+    //   console.debug("overlay.getOpacity() = "+overlay.getOpacity());
+    //   console.debug("overlay properties: "+Object.keys(overlay));
+    //   return overlay;
+    
+    // }
+
+    /**
+     * Add a drawing manager to the map
+     * @param options The options for the drawing manager
+     */
+    window.addDrawingManager = function (options) {
+      drawingMgr = new google.maps.drawing.DrawingManager(options);
+    }
+
+    /**
+     * Covnert an array of Data.Features into a form more compatible with the JSON encoder
+     * @param features an array of Data.Features
+     * @return an array of simplied objects with the same data
+     */
+    window.convertMapDataFeatureArray = function(features){
+
+      console.debug("[convertMapDataFeatureArray()] features = ", features);
+      let undefinedCount = 0;  // counter for undefined ids
+      let result = [];
+      features.forEach( function(feature, idx, valArray) {
+          // Need to re-structure the features object because the JSON encoding encounters a circular reference 
+          console.debug("[convertMapDataFeatureArray()] feature =", feature);
+          let newFeature = {id:null, properties:{}, geometry:{type:null, latLngs:[]}};
+
+          let id = ""+feature.getId();
+          newFeature.id = id+(id == 'undefined' ? "_"+undefinedCount++ : "") ; // make sure that the ID ends up as a string and make different undefined ids different.
+
+          feature.forEachProperty(function(value, name){
+            //console.debug("[addGeoJson()] feature name="+name+": ", value);
+            newFeature.properties[name] = value;
+          });
+
+          let geometry = feature.getGeometry();
+          newFeature.geometry["type"] = geometry.getType();
+          geometry.forEachLatLng(function(latLng){
+            newFeature.geometry.latLngs.push(
+              // Not techincally necessary since system knows how to decode a LatLng object but Makes decoding JSON faster
+              { 
+                lat: latLng.lat(), 
+                lng: latLng.lng()
+              }
+            ); 
+          });
+          console.log("[convertMapDataFeatureArray()] newFeature = ", newFeature);
+          result.push(newFeature);
+      });    
+      console.debug("[convertMapDataFeatureArray()] result = ", result);  
+      return result
+    }
+
+    window.callMapData = function (methodName, ...params) {
+      if(methodName) {  // the method name is required
+        if(methodName in map.data) {
+          return map.data[methodName](...params);
+        }
+        else {
+          console.error("[callmMpData()] Returning null.  Method not found in map.data: "+methodName);
+          return null;
+        }
+      }
+      else {
+        console.error("[callmMpData()] Returning null because an empty parameter array was provided.  A methodName must be supplied as the first parameter.");
+      }      
+    };
+
+    
+    window.callMapDataVoid = function (methodName, ...params) {
+      if(methodName) {  // the method name is required
+        console.log("[callMapDataVoid()] Called with methodName = "+methodName+", params = ", params);
+        if(methodName in map.data) {
+          map.data[methodName](...params); // The rest of the arguments that were passed
+        }
+        else {
+          console.error("[callmMpDataVoid()] Terminating.  Method not found in map.data: "+methodName);
+        }
+      }
+      else {
+        console.error("[callmMpDataVoid()] Terminating.  A methodName must be supplied as the first parameter.");
+      }
+
+    };
+
+  window.callMapDataVoidXform = function (methodName, xformName, ...params) {
+      if(methodName) {  // the method name is required
+        console.log("[callMapDataVoidXform()] Called with methodName = "+methodName+", xformName = "+xformName+", params = ", params);
+        if(methodName in map.data) {
+          let xformParams = params;
+          if(xformName) {
+            if(window.hasOwnProperty(xformName)) {
+              xformParams = window[xformName](...params);
+            }
+            else {
+              console.log("[callMapDataVoidXform()] Terminating. Input parameter transform method not found: "+xformmName);
+              return;
+            }
+          }
+          else {
+             console.log("[callMapDataVoidXform()] No input parameter transform method supplied, so no transform applied.");
+          }
+          map.data[methodName](...xformParams); // The rest of the arguments that were passed
+        }
+        else {
+          console.error("[callMapDataVoidXform()] Terminating.  Method not found in map.data: "+methodName);
+        }
+      }
+      else {
+        console.error("[callmMpDataVoid()] Terminating.  A methodName must be supplied as the first parameter.");
+      }
+    };
+
+    window.xformMapDataFeatureId = function(...params) {
+      params[0] = getMapDataFeatureById(params[0]);
+      return params;
+    };
+    window.getMapDataFeatureById = function(featureId) {
+      let feature = map.data.getFeatureById(featureId);
+      if(!feature) {
+        console.error("[getMapDataFeatureById()] No feature found in map matching feature ID = "+ featureId+".   Returning feature = "+feature);
+      }
+      return feature;
+    };
+
+    /**
+     * Load GeoJSON data from the given string
+     * @param {String} A GeoJSON formatted JSON string 
+     * @return {array} An array of google.maps.Data.Feature objects that has been converted to a simplified form (prevents circular references)
+     */
+    window.addGeoJson = function (geoJsonStr) {
+      let geoJson = JSON.parse(geoJsonStr);
+      let features = map.data.addGeoJson(geoJson); // array of Data.Feature objects
+      return convertMapDataFeatureArray(features);
+    }
+
+
+    /**
+     * Load GeoJSON data from the given URL
+     * @param {String} url The URL to load the data from
+     * @param {function} callback A consumer of a featureID:feature mapping where featureID is a String.
+     */
+    window.loadGeoJson = function (url, callback) {
+      // Process the features here rather than in the callback because of what appears to be a deadlocking problem 
+      // when the callback tries to access feature operations. 
+
+      let geoJsonOptions = null;  // Options only used to override default feature property to use as feature ID.
+      map.data.loadGeoJson(url, geoJsonOptions, function (features) {
+        console.debug("[loadGeoJson()] features = "+features);
+        let result = convertMapDataFeatureArray(features);
+        callback(result);
+      });
+    }
+
+    console.debug("window properties: "+Object.keys(window));
+
+    // let testStr = "{ \"2\": \"two\",\r\n \"42\": \"forty-two\",\r\n \"13\": \"thirteen\" \r\n}";
+    // var testObj = JSON.parse(testStr);
+    // console.log("testObj = ", testObj);
+
+  </script>
+</head>
+
+<body>
+  <div id="map-canvas"></div>
+</body>
+
+</html>

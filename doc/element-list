@@ -1,0 +1,15 @@
+yh87_cp46.chatApp
+yh87_cp46.chatApp.controller
+yh87_cp46.chatApp.model
+yh87_cp46.chatApp.model.message
+yh87_cp46.chatApp.model.message.status
+yh87_cp46.chatApp.view
+yh87_cp46.chatRoom
+yh87_cp46.chatRoom.miniController
+yh87_cp46.chatRoom.miniModel
+yh87_cp46.chatRoom.miniModel.message
+yh87_cp46.chatRoom.miniModel.message.customMsg
+yh87_cp46.chatRoom.miniModel.message.status
+yh87_cp46.chatRoom.miniView
+yh87_cp46.game
+yh87_cp46.game.message

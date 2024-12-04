@@ -1,0 +1,46 @@
+Design and Implementation Notes
+
+Java-JavaScript Communications:
+
+	CEF Message Routers:
+		- CEF Message Routers are used to create multiple messaging pathways from the JS side back to the Java side.   
+		- Different message routers are used for different semantics, e.g. callback fns, object creation, return values
+		- Message routers are created when the CEFUtils instantiates.
+		- IMPORTANT: In a message handlers's CefMessageRouterHandlerAdapter.onQuery(), which processes the returned message on the Java side, 
+		be sure to always call the supplied callback's success() or failure() method.   Omitting this will result in an  
+		"Unexpected call to CefQueryCallback_N::finalize()" error which appears to be emitted from the JavaScript side because the Java side
+		is sending the error message back to the JavaScript side.  
+		
+		On the JS side, each function needs to know which message router it needs to use in order to transmit results back to the Java side.
+		
+	Transparent JSON translation:
+		- The GSON package is used to create transparent, customizable JSON translation to/from the JS side.  
+		- The IGsonFactory creates a customized Gson instance by installing TypeAdapters and TypeAdapterFactories to process various data types.
+		- Installed TypeAdapters  do not always support both read and write (mostly write-only, i.e. to the JS side)
+		- Anonymous inner classes do NOT report their type as their superclass type and thus cannot be automatically processed by Gson 
+		because Gson cannot extract the proper type information.
+		- The system MUST ASSUME that any given object could be an anonymous inner class and thus must take explicit steps to include type information 
+		during the translation process!
+		- The CustomJsonObject class is a wrapper class that holds both a data element and type information on the data element.  
+		When processed by Gson, a CustomJsonObject enables the proper type-dependent processing of its internal data.
+		
+		- Processing callbacks:
+			* When processed by Gson, callbacks are automatically registered with an lookup table in the ICefUtils and a UUID identifier is sent to the JS side.
+			* Runnable and Consumer type callbacks are processed similarly but are sent with a distinguishing identifier when their IDs are sent to the JS side.
+				- ICefDefs.CEF_ENTITY_TYPE_FIELD_NAME is the field name in the object sent to the JS side.
+					* The value of the field is ICefDefs.CEF_ENTITY_TYPE_RUNNABLE or ICefDefs.CEF_ENTITY_TYPE_CONSUMER for Runnables or Consumers respectively
+				- The ICefDefs.CEF_ENTITY_VALUE_FIELD_NAME field is used to hold the string representation of the callback's ID value.
+		
+		
+
+
+JavaScript-side Processing:
+
+	CEF automatic function installation:
+		- When a CEF Message Router is created, CEF automatically installs sets of function names on the JS side with the names specified in a CefMessageRouterConfig 
+		provided when the CEFMessageRouter is instantiated. 
+			* For callbacks, object creation and return value message routers, on the Java side, the names are given respectively by 
+			ICefDefs.CALLBACK_FN_NAME(_CANCEL), ICefDefs.OBJ_CREATE_FN_NAME(_CANCEL) and ICefDefs.RETURN_VALUE_FN_NAME(_CANCEL).
+			* One the JS side, the names are given by constants with the same names as the above Java constants.
+			* The Java and JS constants MUST be MANUALLY kept in sync!
+			
